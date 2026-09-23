@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>퀴즈 결과 · 교수용</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+  body{margin:0;background:#f4f6fb;color:#1b2333;font-family:'Noto Sans KR',system-ui,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:24px 16px 60px}
+  h1{font-size:24px;margin:0 0 4px}
+  .sub{color:#6b7488;margin:0 0 18px;font-size:14px}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .bar input,.bar select{padding:10px 12px;border:1.5px solid #e3e7ef;border-radius:10px;font-size:14px;font-family:inherit}
+  .bar input{flex:1;min-width:160px}
+  .btn{border:0;border-radius:10px;padding:10px 16px;font-weight:700;background:#3056d3;color:#fff;cursor:pointer;font-family:inherit}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+  .kpi{background:#fff;border:1px solid #e3e7ef;border-radius:14px;padding:14px}
+  .kpi b{display:block;font-size:24px} .kpi span{font-size:12px;color:#6b7488}
+  .tbl{background:#fff;border:1px solid #e3e7ef;border-radius:14px;overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:14px;min-width:620px}
+  th,td{padding:10px 12px;border-bottom:1px solid #eef1f6;text-align:left;white-space:nowrap}
+  th{background:#f7f9fc;font-size:13px;color:#6b7488}
+  .ok{color:#1a9b5b;font-weight:700} .ing{color:#c98a00;font-weight:700}
+  h2{font-size:17px;margin:26px 0 10px}
+  .hard td:last-child{font-weight:700}
+  @media (max-width:600px){.kpis{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📊 R 문제은행 퀴즈 결과</h1>
+  <p class="sub">학생들이 제출한 결과가 실시간으로 표시됩니다.</p>
+  <div class="bar">
+    <input id="q" placeholder="이름 또는 학번 검색">
+    <select id="f"><option value="all">전체</option><option value="done">완료만</option><option value="best">학생별 최고점만</option></select>
+    <button class="btn" id="csv">CSV 다운로드</button>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><b id="k1">-</b><span>응시 학생 수</span></div>
+    <div class="kpi"><b id="k2">-</b><span>완료된 응시</span></div>
+    <div class="kpi"><b id="k3">-</b><span>평균 점수(100점)</span></div>
+    <div class="kpi"><b id="k4">-</b><span>최고 점수</span></div>
+  </div>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>이름</th><th>학번</th><th>점수</th><th>환산</th><th>상태</th><th>소요시간</th><th>응시 시각</th></tr></thead>
+    <tbody id="rows"><tr><td colspan="8">불러오는 중…</td></tr></tbody>
+  </table></div>
+
+  <h2>🔥 오답률 높은 문제 TOP 10</h2>
+  <div class="tbl"><table class="hard">
+    <thead><tr><th>번호</th><th>영역</th><th>문제</th><th>출제</th><th>오답률</th></tr></thead>
+    <tbody id="hard"></tbody>
+  </table></div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="questions.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyAp_iI1mhnIWMebdzXUu2gE21aW9TMD2sg",
+  authDomain: "bbb-game-d6047.firebaseapp.com",
+  databaseURL: "https://bbb-game-d6047-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "bbb-game-d6047",
+  storageBucket: "bbb-game-d6047.firebasestorage.app",
+  messagingSenderId: "183746574206",
+  appId: "1:183746574206:web:62690fa29fb2024a26652f"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const esc = s => String(s??"").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = t => t ? new Date(t).toLocaleString("ko-KR",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}) : "-";
+const dur = s => s ? `${Math.floor(s/60)}분 ${s%60}초` : "-";
+let ALL = [];
+
+db.ref("adsp_r_quiz/attempts").on("value", snap => {
+  const v = snap.val() || {};
+  ALL = Object.entries(v).map(([k,a]) => ({ key:k, ...a })).sort((a,b)=>(b.startedAt||0)-(a.startedAt||0));
+  render(); renderHard();
+}, err => { document.getElementById("rows").innerHTML = `<tr><td colspan="8">읽기 권한이 없습니다: ${esc(err.message)}</td></tr>`; });
+
+function view(){
+  const q = document.getElementById("q").value.trim().toLowerCase(), f = document.getElementById("f").value;
+  let list = ALL.filter(a => !q || (a.name||"").toLowerCase().includes(q) || (a.studentId||"").includes(q));
+  if(f==="done") list = list.filter(a => a.finished);
+  if(f==="best"){
+    const m = {}; list.filter(a=>a.finished).forEach(a => { if(!m[a.studentId] || a.score>m[a.studentId].score) m[a.studentId]=a; });
+    list = Object.values(m).sort((a,b)=>b.score-a.score);
+  }
+  return list;
+}
+function render(){
+  const list = view(), done = ALL.filter(a=>a.finished);
+  document.getElementById("k1").textContent = new Set(ALL.map(a=>a.studentId)).size;
+  document.getElementById("k2").textContent = done.length;
+  document.getElementById("k3").textContent = done.length ? Math.round(done.reduce((s,a)=>s+(a.percent||0),0)/done.length) : "-";
+  document.getElementById("k4").textContent = done.length ? Math.max(...done.map(a=>a.percent||0)) : "-";
+  document.getElementById("rows").innerHTML = list.length ? list.map((a,i)=>`<tr>
+    <td>${i+1}</td><td>${esc(a.name)}</td><td>${esc(a.studentId)}</td>
+    <td>${a.score??0} / ${a.total??20}</td><td>${a.finished ? (a.percent??"-")+"점" : "-"}</td>
+    <td>${a.finished ? '<span class="ok">완료</span>' : `<span class="ing">진행중 (${a.answered||0}/${a.total||20})</span>`}</td>
+    <td>${dur(a.durationSec)}</td><td>${fmt(a.startedAt)}</td></tr>`).join("") : `<tr><td colspan="8">아직 응시 기록이 없습니다.</td></tr>`;
+}
+function renderHard(){
+  const st = {};
+  ALL.forEach(a => (Array.isArray(a.answers)?a.answers:Object.values(a.answers||{})).forEach(x => {
+    if(!x) return; st[x.qid] = st[x.qid] || {n:0,w:0}; st[x.qid].n++; if(!x.ok) st[x.qid].w++;
+  }));
+  const top = Object.entries(st).filter(([,s])=>s.n>=3).map(([id,s])=>({id:+id,...s,r:s.w/s.n})).sort((a,b)=>b.r-a.r).slice(0,10);
+  document.getElementById("hard").innerHTML = top.length ? top.map(t => { const q = QUESTION_BANK.find(x=>x.id===t.id);
+    return `<tr><td>${t.id}</td><td>${esc(q.topic)}</td><td style="white-space:normal">${esc(q.q.split("\n")[0])}</td><td>${t.n}회</td><td>${Math.round(t.r*100)}%</td></tr>`; }).join("")
+    : `<tr><td colspan="5">문항별로 3번 이상 풀이 기록이 쌓이면 표시됩니다.</td></tr>`;
+}
+document.getElementById("q").oninput = render;
+document.getElementById("f").onchange = render;
+document.getElementById("csv").onclick = () => {
+  const rows = [["이름","학번","점수","총문항","환산점수","완료","소요시간(초)","응시시각"]]
+    .concat(view().map(a => [a.name,a.studentId,a.score??0,a.total??20,a.percent??"",a.finished?"Y":"N",a.durationSec??"",a.startedAt?new Date(a.startedAt).toLocaleString("ko-KR"):""]));
+  const csv = "﻿" + rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
+  a.download = `R퀴즈_결과_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+};
+</script>
+</body>
+</html>
